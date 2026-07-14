@@ -93,15 +93,11 @@ func (c *UConn) HandshakeContextServerName(ctx context.Context) string {
 	return c.ConnectionState().ServerName
 }
 
-// WebsocketHandshakeContext basically calls UConn.Handshake inside it but it will try
-// to build outer ALPN to `http/1.1` or `h2 http/1.1` (if manually specified for camouflage)
+// WebsocketHandshakeContext builds the handshake state and performs the TLS handshake.
+// It respects user-configured ALPN protocols, only overriding for ECH where
+// the outer ALPN must be http/1.1 while the real ALPN is hidden inside ECH.
 func (c *UConn) WebsocketHandshakeContext(ctx context.Context) error {
 	config := *utils.AccessField[*utls.Config](c, "config")
-	ALPN := slices.Clone(config.NextProtos)
-	// set other kinds of ALPN to http/1.1
-	if !slices.Equal(ALPN, []string{"h2", "http/1.1"}) {
-		ALPN = []string{"http/1.1"}
-	}
 	// Build the handshake state. This will apply every variable of the TLS of the
 	// fingerprint in the UConn
 	if err := c.BuildHandshakeState(); err != nil {
@@ -118,12 +114,12 @@ func (c *UConn) WebsocketHandshakeContext(ctx context.Context) error {
 	for _, extension := range c.Extensions {
 		if alpn, ok := extension.(*utls.ALPNExtension); ok {
 			hasALPNExtension = true
-			alpn.AlpnProtocols = ALPN
+			alpn.AlpnProtocols = slices.Clone(config.NextProtos)
 			break
 		}
 	}
 	if !hasALPNExtension { // Append extension if doesn't exists
-		c.Extensions = append(c.Extensions, &utls.ALPNExtension{AlpnProtocols: ALPN})
+		c.Extensions = append(c.Extensions, &utls.ALPNExtension{AlpnProtocols: slices.Clone(config.NextProtos)})
 	}
 	// Rebuild the client hello and do the handshake
 	if err := c.BuildHandshakeState(); err != nil {
